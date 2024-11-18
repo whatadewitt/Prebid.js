@@ -66,6 +66,7 @@
  */
 
 import {
+  callBurl,
   deepAccess,
   generateUUID,
   getValue,
@@ -76,6 +77,7 @@ import {
   logInfo,
   logMessage,
   logWarn,
+  logDetails,
   parseUrl,
   timestamp
 } from './utils.js';
@@ -149,7 +151,6 @@ export function newAuction({adUnits, adUnitCodes, callback, cbTimeout, labels, a
   const _timeout = cbTimeout;
   const _timelyRequests = new Set();
   const done = defer();
-  const requestsDone = defer();
   let _bidsRejected = [];
   let _callback = callback;
   let _bidderRequests = [];
@@ -262,6 +263,7 @@ export function newAuction({adUnits, adUnitCodes, callback, cbTimeout, labels, a
     let bidRequests = metrics.measureTime('requestBids.makeRequests',
       () => adapterManager.makeBidRequests(_adUnits, _auctionStart, _auctionId, _timeout, _labels, ortb2Fragments, metrics));
     logInfo(`Bids Requested for Auction with id: ${_auctionId}`, bidRequests);
+    logDetails(JSON.stringify(bidRequests, null, 4));
 
     metrics.checkpoint('callBids')
 
@@ -289,8 +291,6 @@ export function newAuction({adUnits, adUnitCodes, callback, cbTimeout, labels, a
     let call = {
       bidRequests,
       run: () => {
-        startAuctionTimer();
-
         _auctionStatus = AUCTION_IN_PROGRESS;
 
         events.emit(EVENTS.AUCTION_INIT, getProperties());
@@ -320,7 +320,8 @@ export function newAuction({adUnits, adUnitCodes, callback, cbTimeout, labels, a
             }
           }
         }, _timeout, onTimelyResponse, ortb2Fragments);
-        requestsDone.resolve();
+
+        startAuctionTimer();
       }
     };
 
@@ -371,11 +372,11 @@ export function newAuction({adUnits, adUnitCodes, callback, cbTimeout, labels, a
   }
 
   function addWinningBid(winningBid) {
+    const winningAd = adUnits.find(adUnit => adUnit.adUnitId === winningBid.adUnitId);
     _winningBids = _winningBids.concat(winningBid);
+    callBurl(winningBid);
     adapterManager.callBidWonBidder(winningBid.adapterCode || winningBid.bidder, winningBid, adUnits);
-    if (!winningBid.deferBilling) {
-      adapterManager.triggerBilling(winningBid)
-    }
+    if (winningAd && !winningAd.deferBilling) adapterManager.callBidBillableBidder(winningBid);
   }
 
   function setBidTargeting(bid) {
@@ -409,8 +410,7 @@ export function newAuction({adUnits, adUnitCodes, callback, cbTimeout, labels, a
     getNonBids: () => _nonBids,
     getFPD: () => ortb2Fragments,
     getMetrics: () => metrics,
-    end: done.promise,
-    requestsDone: requestsDone.promise
+    end: done.promise
   };
 }
 
@@ -635,15 +635,15 @@ function getPreparedBidForAuction(bid, {index = auctionManager.index} = {}) {
   var renderer = null;
 
   // the renderer for the mediaType takes precendence
-  if (mediaTypeRenderer && mediaTypeRenderer.render && !(mediaTypeRenderer.backupOnly === true && bid.renderer)) {
+  if (mediaTypeRenderer && mediaTypeRenderer.url && mediaTypeRenderer.render && !(mediaTypeRenderer.backupOnly === true && bid.renderer)) {
     renderer = mediaTypeRenderer;
-  } else if (bidRenderer && bidRenderer.render && !(bidRenderer.backupOnly === true && bid.renderer)) {
+  } else if (bidRenderer && bidRenderer.url && bidRenderer.render && !(bidRenderer.backupOnly === true && bid.renderer)) {
     renderer = bidRenderer;
   }
 
   if (renderer) {
     // be aware, an adapter could already have installed the bidder, in which case this overwrite's the existing adapter
-    bid.renderer = Renderer.install({ url: renderer.url, config: renderer.options, renderNow: renderer.url == null });// rename options to config, to make it consistent?
+    bid.renderer = Renderer.install({ url: renderer.url, config: renderer.options });// rename options to config, to make it consistent?
     bid.renderer.setRender(renderer.render);
   }
 
@@ -858,7 +858,11 @@ export function getKeyValueTargetingPairs(bidderCode, custBidObj, {index = aucti
   }
 
   // set native key value targeting
-  if (FEATURES.NATIVE && custBidObj['native']) {
+  if (
+    FEATURES.NATIVE &&
+    custBidObj["native"] &&
+    !config.getConfig("targetingControls.skipNativeTargeting")
+  ) {
     keyValues = Object.assign({}, keyValues, getNativeTargeting(custBidObj));
   }
 

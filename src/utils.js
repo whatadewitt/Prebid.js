@@ -1,7 +1,7 @@
 import {config} from './config.js';
 import {klona} from 'klona/json';
 import {includes} from './polyfill.js';
-import {EVENTS} from './constants.js';
+import { EVENTS, S2S } from './constants.js';
 import {GreedyPromise} from './utils/promise.js';
 import {getGlobal} from './prebidGlobal.js';
 import { default as deepAccess } from 'dlv/index.js';
@@ -257,6 +257,12 @@ export function prefixLog(prefix) {
   }
 }
 
+export function logDetails() {
+  if (detailDebugTurnedOn() && consoleInfoExists) {
+    console.error.apply(console, decorateLog(arguments, "DETAILS:"));
+  }
+}
+
 function decorateLog(args, prefix) {
   args = [].slice.call(args);
   let bidder = config.getCurrentBidder();
@@ -276,6 +282,10 @@ function decorateLog(args, prefix) {
 
 export function hasConsoleLogger() {
   return consoleLogExists;
+}
+
+export function detailDebugTurnedOn() {
+  return !!config.getConfig("detailDebug");
 }
 
 export function debugTurnedOn() {
@@ -474,6 +484,12 @@ export function triggerPixel(url, done, timeout) {
   img.src = url;
 }
 
+export function callBurl({ source, burl }) {
+  if (source === S2S.SRC && burl) {
+    internal.triggerPixel(burl);
+  }
+}
+
 /**
  * Inserts an empty iframe with the specified `html`, primarily used for tracking purposes
  * (though could be for other purposes)
@@ -604,10 +620,6 @@ export function isApnGetTagDefined() {
   if (window.apntag && isFn(window.apntag.getTag)) {
     return true;
   }
-}
-
-export const sortByHighestCpm = (a, b) => {
-  return b.cpm - a.cpm;
 }
 
 /**
@@ -1255,32 +1267,4 @@ export function setOnAny(collection, key) {
     }
   }
   return undefined;
-}
-
-export function extractDomainFromHost(pageHost) {
-  let domain = null;
-  try {
-    let domains = /[-\w]+\.([-\w]+|[-\w]{3,}|[-\w]{1,3}\.[-\w]{2})$/i.exec(pageHost);
-    if (domains != null && domains.length > 0) {
-      domain = domains[0];
-      for (let i = 1; i < domains.length; i++) {
-        if (domains[i].length > domain.length) {
-          domain = domains[i];
-        }
-      }
-    }
-  } catch (e) {
-    domain = null;
-  }
-  return domain;
-}
-
-export function triggerNurlWithCpm(bid, cpm) {
-  if (isStr(bid.nurl) && bid.nurl !== '') {
-    bid.nurl = bid.nurl.replace(
-      /\${AUCTION_PRICE}/,
-      cpm
-    );
-    triggerPixel(bid.nurl);
-  }
 }
